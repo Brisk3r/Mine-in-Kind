@@ -1,0 +1,468 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+   <meta charset="UTF-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+   <title>Pickaxe Dropper</title>
+   <script src="https://cdn.tailwindcss.com"></script>
+   <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.min.js"></script>
+   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+   <style>
+       body {
+           font-family: 'Press Start 2P', cursive;
+           touch-action: none; /* Prevents scrolling on mobile */
+           overflow: hidden;
+           background-color: #2c1d11;
+           color: #f0e6d2;
+       }
+       .text-shadow {
+           text-shadow: 2px 2px #000000;
+       }
+       .btn-upgrade {
+           transition: all 0.1s ease-in-out;
+       }
+       .btn-upgrade:active {
+           transform: scale(0.95);
+           filter: brightness(0.9);
+       }
+       .btn-upgrade:disabled {
+           filter: grayscale(80%);
+           cursor: not-allowed;
+       }
+       #gameCanvas {
+           cursor: pointer;
+           background-color: #4a2f20;
+           border-bottom: 8px solid #362216;
+       }
+       .floating-text {
+           animation: float-and-fade 1.5s ease-out forwards;
+           position: absolute;
+           pointer-events: none;
+           z-index: 100;
+       }
+       @keyframes float-and-fade {
+           0% {
+               transform: translateY(0);
+               opacity: 1;
+           }
+           100% {
+               transform: translateY(-60px);
+               opacity: 0;
+           }
+       }
+   </style>
+</head>
+<body class="flex flex-col items-center justify-center h-screen bg-gray-800 text-white p-2 md:p-4">
+
+   <div id="gameContainer" class="w-full max-w-md mx-auto bg-[#362216] rounded-xl shadow-2xl border-4 border-[#5a3a22] overflow-hidden">
+       <!-- Header -->
+       <div class="p-3 bg-[#5a3a22] border-b-4 border-[#362216] flex justify-between items-center">
+           <div>
+               <h1 class="text-xl md:text-2xl text-shadow text-yellow-300">Pickaxe Drop</h1>
+           </div>
+           <div class="text-right">
+               <div class="text-lg md:text-xl text-shadow text-yellow-400">💰 <span id="goldDisplay">0</span></div>
+               <div class="text-sm text-shadow text-gray-300">Depth: <span id="depthDisplay">0</span>m</div>
+           </div>
+       </div>
+
+       <!-- Game Canvas Wrapper -->
+       <div id="canvasWrapper" class="relative">
+           <canvas id="gameCanvas"></canvas>
+           <div id="messageOverlay" class="absolute inset-0 flex items-center justify-center text-center text-3xl text-shadow text-white bg-black bg-opacity-50 pointer-events-none opacity-100 transition-opacity duration-300">
+               Click to Drop!
+           </div>
+       </div>
+
+       <!-- Upgrades Section -->
+       <div class="p-3 bg-[#5a3a22] border-t-4 border-[#362216]">
+           <h2 class="text-lg text-center mb-3 text-shadow text-yellow-300">Upgrades</h2>
+           <div class="grid grid-cols-2 gap-2 text-sm">
+               <button id="upgradePower" class="btn-upgrade bg-green-600 hover:bg-green-700 p-2 rounded-lg shadow-md border-b-4 border-green-800">
+                   <div>💪 Power: <span id="powerLevel">1</span></div>
+                   <div class="text-xs">Cost: <span id="powerCost">10</span>💰</div>
+               </button>
+               <button id="upgradeWeight" class="btn-upgrade bg-blue-600 hover:bg-blue-700 p-2 rounded-lg shadow-md border-b-4 border-blue-800">
+                   <div>⚖️ Weight: <span id="weightLevel">1</span></div>
+                   <div class="text-xs">Cost: <span id="weightCost">15</span>💰</div>
+               </button>
+               <button id="upgradeBounciness" class="btn-upgrade bg-purple-600 hover:bg-purple-700 p-2 rounded-lg shadow-md border-b-4 border-purple-800">
+                   <div>🤸 Bounciness: <span id="bouncinessLevel">1</span></div>
+                   <div class="text-xs">Cost: <span id="bouncinessCost">20</span>💰</div>
+               </button>
+               <button id="upgradeShaft" class="btn-upgrade bg-yellow-600 hover:bg-yellow-700 p-2 rounded-lg shadow-md border-b-4 border-yellow-800">
+                   <div>💎 Shaft Quality: <span id="shaftLevel">1</span></div>
+                   <div class="text-xs">Cost: <span id="shaftCost">100</span>💰</div>
+               </button>
+           </div>
+       </div>
+   </div>
+
+   <script>
+       // Wrap entire game logic in a DOMContentLoaded listener to prevent race conditions
+       window.addEventListener('DOMContentLoaded', () => {
+           const canvas = document.getElementById('gameCanvas');
+           const ctx = canvas.getContext('2d');
+           const gameContainer = document.getElementById('gameContainer');
+           const canvasWrapper = document.getElementById('canvasWrapper');
+
+           // --- DOM Elements ---
+           const goldDisplay = document.getElementById('goldDisplay');
+           const depthDisplay = document.getElementById('depthDisplay');
+           const messageOverlay = document.getElementById('messageOverlay');
+           
+           // Upgrade Buttons and Displays
+           const upgradePowerBtn = document.getElementById('upgradePower');
+           const powerLevelDisplay = document.getElementById('powerLevel');
+           const powerCostDisplay = document.getElementById('powerCost');
+
+           const upgradeWeightBtn = document.getElementById('upgradeWeight');
+           const weightLevelDisplay = document.getElementById('weightLevel');
+           const weightCostDisplay = document.getElementById('weightCost');
+
+           const upgradeBouncinessBtn = document.getElementById('upgradeBounciness');
+           const bouncinessLevelDisplay = document.getElementById('bouncinessLevel');
+           const bouncinessCostDisplay = document.getElementById('bouncinessCost');
+           
+           const upgradeShaftBtn = document.getElementById('upgradeShaft');
+           const shaftLevelDisplay = document.getElementById('shaftLevel');
+           const shaftCostDisplay = document.getElementById('shaftCost');
+
+           // --- Game State & Config ---
+           let gameState = 'waiting'; // 'waiting', 'dropping', 'ended'
+           let gold = 0;
+           let runGold = 0;
+           let maxDepth = 0;
+           const BLOCK_SIZE = 32;
+           let COLS, ROWS;
+           let blocks = [];
+
+           const pickaxe = {
+               emoji: '⛏️',
+               x: 0, y: 0, w: 30, h: 30,
+               vx: 0, vy: 0,
+               angle: 0, angularVelocity: 0,
+               power: 1,
+               weight: 1,
+               bounciness: 0.4
+           };
+           
+           const upgrades = {
+               power: { level: 1, cost: 10, baseCost: 10, costMultiplier: 1.5 },
+               weight: { level: 1, cost: 15, baseCost: 15, costMultiplier: 1.6 },
+               bounciness: { level: 1, cost: 20, baseCost: 20, costMultiplier: 1.8 },
+               shaft: { level: 1, cost: 100, baseCost: 100, costMultiplier: 2.5 },
+           };
+
+           const GRAVITY = 0.2;
+           const FRICTION = 0.99;
+           
+           // --- Sound Engine (Tone.js) ---
+           let soundsReady = false;
+           const synth = new Tone.MembraneSynth().toDestination();
+           const metalSynth = new Tone.MetalSynth({
+               frequency: 150,
+               envelope: { attack: 0.001, decay: 0.1, release: 0.01 },
+               harmonicity: 5.1,
+               modulationIndex: 32,
+               resonance: 4000,
+               octaves: 1.5
+           }).toDestination();
+           const upgradeSynth = new Tone.Synth({
+               oscillator: { type: 'triangle' },
+               envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.1 }
+           }).toDestination();
+
+           function playSound(type, value = 0) {
+               if (!soundsReady) return;
+               try {
+                   if (type === 'hit_block') {
+                       // Cap the note's octave to prevent Tone.js from crashing on high values.
+                       const noteOctave = Math.min(8, 2 + value); 
+                       metalSynth.triggerAttackRelease(`C${noteOctave}`, '8n', Tone.now());
+                   } else if (type === 'hit_wall') {
+                       synth.triggerAttackRelease('C1', '8n', Tone.now(), 0.5);
+                   } else if (type === 'upgrade') {
+                       upgradeSynth.triggerAttackRelease('C4', '16n', Tone.now());
+                       upgradeSynth.triggerAttackRelease('G4', '16n', Tone.now() + 0.1);
+                   }
+               } catch (e) {
+                   console.error("Sound playback failed:", e);
+               }
+           }
+
+           const blockTypes = {
+               0: { emoji: '🟫', health: 1, value: 1, name: 'dirt' },
+               1: { emoji: '🧱', health: 3, value: 3, name: 'stone' },
+               2: { emoji: '⚫', health: 8, value: 10, name: 'coal' },
+               3: { emoji: '🔩', health: 15, value: 25, name: 'iron' },
+               4: { emoji: '💰', health: 25, value: 75, name: 'gold' },
+               5: { emoji: '💎', health: 50, value: 200, name: 'diamond' }
+           };
+           
+           // --- Core Functions ---
+           function resizeCanvas() {
+               const containerWidth = gameContainer.clientWidth;
+               canvas.width = containerWidth;
+               canvas.height = window.innerHeight * 0.5;
+               COLS = Math.floor(canvas.width / BLOCK_SIZE);
+               ROWS = Math.floor(canvas.height / BLOCK_SIZE) + 10; // Extra rows for scrolling buffer
+               if (gameState === 'waiting') resetPickaxe();
+           }
+
+           function generateMineshaft() {
+               blocks = [];
+               for (let y = 0; y < ROWS * 5; y++) { // Generate a deep shaft
+                   const row = [];
+                   for (let x = 0; x < COLS; x++) {
+                       if (y < 2) { // Air at the top
+                           row.push(null);
+                           continue;
+                       }
+                       const shaftQuality = upgrades.shaft.level;
+                       const random = Math.random();
+                       let blockType = 0; // Default to dirt
+                       
+                       // Determine block type based on rarity and shaft quality
+                       if (random < 0.01 + shaftQuality * 0.005) blockType = 5; // Diamond
+                       else if (random < 0.03 + shaftQuality * 0.008) blockType = 4; // Gold
+                       else if (random < 0.08 + shaftQuality * 0.01) blockType = 3; // Iron
+                       else if (random < 0.20 + shaftQuality * 0.02) blockType = 2; // Coal
+                       else if (y > 5 && random < 0.6) blockType = 1; // Stone
+                       
+                       const type = blockTypes[blockType];
+                       row.push({ ...type, currentHealth: type.health, x: x * BLOCK_SIZE, y: y * BLOCK_SIZE });
+                   }
+                   blocks.push(row);
+               }
+           }
+
+           function resetPickaxe() {
+               pickaxe.x = canvas.width / 2;
+               pickaxe.y = BLOCK_SIZE * 1.5;
+               pickaxe.vx = 0;
+               pickaxe.vy = 0;
+               pickaxe.angle = 0;
+               pickaxe.angularVelocity = 0;
+
+               // Apply upgrades
+               pickaxe.power = 1 + (upgrades.power.level - 1) * 0.5;
+               pickaxe.weight = 1 + (upgrades.weight.level - 1) * 0.2;
+               pickaxe.bounciness = 0.4 + (upgrades.bounciness.level - 1) * 0.05;
+
+               runGold = 0;
+               maxDepth = 0;
+               depthDisplay.innerText = '0m';
+               updateUI();
+           }
+           
+           function startRun() {
+               if (gameState !== 'waiting') return;
+               // Start audio context on user interaction
+               if (!soundsReady) {
+                   Tone.start().then(() => {
+                       soundsReady = true;
+                   });
+               }
+               gameState = 'dropping';
+               messageOverlay.style.opacity = '0';
+               pickaxe.vx = (Math.random() - 0.5) * 10;
+               pickaxe.vy = 5;
+               pickaxe.angularVelocity = (Math.random() - 0.5) * 0.5;
+           }
+
+           function endRun() {
+               if (gameState !== 'dropping') return;
+               gameState = 'ended';
+               createFloatingText(`+${runGold}💰`, canvas.width / 2, canvas.height / 2, 'text-yellow-400 text-3xl text-shadow');
+               
+               setTimeout(() => {
+                   gold += runGold;
+                   gameState = 'waiting';
+                   resetPickaxe();
+                   generateMineshaft();
+                   messageOverlay.innerText = 'Click to Drop!';
+                   messageOverlay.style.opacity = '1';
+                   updateUI();
+               }, 2000);
+           }
+
+           let cameraY = 0;
+           function gameLoop() {
+               update();
+               draw();
+               requestAnimationFrame(gameLoop);
+           }
+
+           function update() {
+               if (gameState !== 'dropping') return;
+
+               // Physics
+               pickaxe.vy += GRAVITY * pickaxe.weight;
+               pickaxe.vx *= FRICTION;
+               pickaxe.vy *= FRICTION;
+               pickaxe.x += pickaxe.vx;
+               pickaxe.y += pickaxe.vy;
+               pickaxe.angle += pickaxe.angularVelocity;
+               pickaxe.angularVelocity *= 0.98;
+
+               // Wall collisions
+               if (pickaxe.x - pickaxe.w / 2 < 0) {
+                   pickaxe.x = pickaxe.w / 2;
+                   pickaxe.vx *= -pickaxe.bounciness;
+                   pickaxe.angularVelocity += pickaxe.vy * 0.01;
+                   playSound('hit_wall');
+               }
+               if (pickaxe.x + pickaxe.w / 2 > canvas.width) {
+                   pickaxe.x = canvas.width - pickaxe.w / 2;
+                   pickaxe.vx *= -pickaxe.bounciness;
+                   pickaxe.angularVelocity -= pickaxe.vy * 0.01;
+                   playSound('hit_wall');
+               }
+               
+               // Block collisions
+               const pickaxeSpeed = Math.sqrt(pickaxe.vx * pickaxe.vx + pickaxe.vy * pickaxe.vy);
+               const gridY = Math.floor(pickaxe.y / BLOCK_SIZE);
+               const gridX = Math.floor(pickaxe.x / BLOCK_SIZE);
+
+               for (let y = Math.max(0, gridY - 1); y <= gridY + 1; y++) {
+                   for (let x = Math.max(0, gridX - 1); x <= gridX + 1; x++) {
+                       if (y < blocks.length && x >= 0 && x < COLS) {
+                           const block = blocks[y][x];
+                           if (block &&
+                               pickaxe.x < block.x + BLOCK_SIZE && pickaxe.x + pickaxe.w > block.x &&
+                               pickaxe.y < block.y + BLOCK_SIZE && pickaxe.y + pickaxe.h > block.y) {
+                               
+                               const damage = pickaxeSpeed * pickaxe.power;
+                               block.currentHealth -= damage;
+                               
+                               // Knockback effect
+                               pickaxe.vx *= 0.9;
+                               pickaxe.vy *= 0.9;
+
+                               if (block.currentHealth <= 0) {
+                                   createFloatingText(`+${block.value}`, block.x + BLOCK_SIZE / 2, block.y - cameraY, 'text-green-400 text-lg text-shadow');
+                                   runGold += block.value;
+                                   blocks[y][x] = null; // Remove block
+                                   playSound('hit_block', Math.round(block.value / 10));
+                               } else {
+                                   playSound('hit_block');
+                               }
+                           }
+                       }
+                   }
+               }
+
+               // Update depth and gold display
+               const currentDepth = Math.floor(pickaxe.y / BLOCK_SIZE);
+               if(currentDepth > maxDepth) maxDepth = currentDepth;
+               depthDisplay.innerText = `${maxDepth}m`;
+               goldDisplay.innerText = `${gold + runGold}`;
+
+               // Camera follow
+               const targetCameraY = pickaxe.y - canvas.height / 2;
+               cameraY += (targetCameraY - cameraY) * 0.1; // Smooth camera movement
+
+               // End run condition
+               if (pickaxeSpeed < 0.1 && pickaxe.y > BLOCK_SIZE * 3) {
+                   endRun();
+               }
+           }
+           
+           function draw() {
+               ctx.clearRect(0, 0, canvas.width, canvas.height);
+               ctx.save();
+               ctx.translate(0, -cameraY);
+
+               // Culling: Only draw visible blocks
+               const startRow = Math.floor(cameraY / BLOCK_SIZE);
+               const endRow = Math.min(startRow + ROWS, blocks.length);
+
+               ctx.font = `${BLOCK_SIZE * 0.8}px sans-serif`;
+               ctx.textAlign = 'center';
+               ctx.textBaseline = 'middle';
+
+               for (let y = startRow; y < endRow; y++) {
+                   if (!blocks[y]) continue;
+                   for (let x = 0; x < COLS; x++) {
+                       const block = blocks[y][x];
+                       if (block) {
+                           // Fade block based on health
+                           ctx.globalAlpha = block.currentHealth / block.health;
+                           ctx.fillText(block.emoji, block.x + BLOCK_SIZE / 2, block.y + BLOCK_SIZE / 2);
+                       }
+                   }
+               }
+               ctx.globalAlpha = 1;
+
+               // Draw Pickaxe
+               ctx.save();
+               ctx.translate(pickaxe.x, pickaxe.y);
+               ctx.rotate(pickaxe.angle);
+               ctx.font = `${pickaxe.w}px sans-serif`;
+               ctx.fillText(pickaxe.emoji, 0, 0);
+               ctx.restore();
+
+               ctx.restore();
+           }
+           
+           // --- UI & Event Handlers ---
+            function createFloatingText(text, x, y, className) {
+                const textElement = document.createElement('div');
+                textElement.className = `floating-text font-bold ${className}`;
+                textElement.style.left = `${x}px`;
+                textElement.style.top = `${y}px`;
+                textElement.innerText = text;
+                canvasWrapper.appendChild(textElement);
+                setTimeout(() => textElement.remove(), 1500);
+           }
+
+           function updateUI() {
+               goldDisplay.innerText = `${gold}`;
+               
+               const updateButton = (type, levelEl, costEl, btnEl) => {
+                   const upgrade = upgrades[type];
+                   levelEl.innerText = upgrade.level;
+                   costEl.innerText = Math.ceil(upgrade.cost);
+                   btnEl.disabled = gold < upgrade.cost;
+               };
+
+               updateButton('power', powerLevelDisplay, powerCostDisplay, upgradePowerBtn);
+               updateButton('weight', weightLevelDisplay, weightCostDisplay, upgradeWeightBtn);
+               updateButton('bounciness', bouncinessLevelDisplay, bouncinessCostDisplay, upgradeBouncinessBtn);
+               updateButton('shaft', shaftLevelDisplay, shaftCostDisplay, upgradeShaftBtn);
+           }
+
+           function buyUpgrade(type) {
+               const upgrade = upgrades[type];
+               if (gold >= upgrade.cost && gameState === 'waiting') {
+                   gold -= Math.ceil(upgrade.cost);
+                   upgrade.level++;
+                   upgrade.cost *= upgrade.costMultiplier;
+                   playSound('upgrade');
+                   updateUI(); // <-- FIX: Update UI immediately after purchase
+                   resetPickaxe();
+               }
+           }
+           
+           // Event Listeners
+           canvas.addEventListener('click', startRun);
+           upgradePowerBtn.addEventListener('click', () => buyUpgrade('power'));
+           upgradeWeightBtn.addEventListener('click', () => buyUpgrade('weight'));
+           upgradeBouncinessBtn.addEventListener('click', () => buyUpgrade('bounciness'));
+           upgradeShaftBtn.addEventListener('click', () => buyUpgrade('shaft'));
+           window.addEventListener('resize', resizeCanvas);
+
+           function init() {
+               resizeCanvas();
+               generateMineshaft();
+               resetPickaxe();
+               messageOverlay.style.opacity = '1';
+               gameLoop();
+           }
+
+           init();
+       });
+   </script>
+</body>
+</html>
